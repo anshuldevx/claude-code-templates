@@ -1,263 +1,214 @@
-# claude-code-templates: Codebase Guide
+# How This Repo Works
 
-As of 2026-09-25.
+A beginner-friendly guide to `claude-code-templates`, written for backend developers who are new to the project. As of 2026-09-25.
 
-## The big picture
+## 1. What does this project do?
 
-The repo is one product with three faces. A library of Claude Code components (plain files under `cli-tool/components/`), an npm CLI (`claude-code-templates` / `cct`) that installs them, and a website (www.aitmpl.com) to browse them. Everything else is plumbing that keeps those three in sync.
+It's a collection of add-ons for [Claude Code](https://claude.com/claude-code), plus a tool that installs them.
 
-The key fact: **the CLI does not ship the components.** The npm package holds only `cli-tool/bin/`, `cli-tool/src/` and the sandbox component. At install time the CLI fetches each file from `raw.githubusercontent.com/davila7/claude-code-templates/main/cli-tool/components/...`. So a component merged to `main` is instantly installable, with no npm release.
+Think of it like a package manager, but for Claude Code settings and helpers:
+
+- **The add-ons** (called *components*) are plain text files: Markdown and JSON.
+- **The installer** is a command-line tool you run with `npx claude-code-templates`.
+- **The website** (www.aitmpl.com) lets people browse the add-ons and copy the install command.
+
+Example: running `npx claude-code-templates --agent development-team/backend-architect` downloads one Markdown file and saves it to `.claude/agents/backend-architect.md` in your project.
+
+## 2. Words you'll see
+
+| Word | What it means here |
+| --- | --- |
+| Component | One add-on: an agent, command, skill, hook, MCP, setting, loop or mod |
+| Catalog | A big JSON list of every component, used by the website |
+| CLI | The command-line installer (`cli-tool/`) |
+| Dashboard | The website (`dashboard/`). Same thing as "the site" |
+| API route | A backend endpoint, e.g. `POST /api/track-download-supabase` |
+| Cloudflare Pages | Where the website and its API routes are hosted |
+| Cloudflare Worker | A small script Cloudflare runs on a schedule (like a cron job) |
+| Supabase / Neon | The two hosted Postgres databases the backend uses |
+
+## 3. The whole system in one picture
 
 ```mermaid
 flowchart LR
-    C["cli-tool/components/<br/>agents, skills, hooks..."]
-    G["scripts/<br/>generate_components_json.py"]
-    J["Generated JSON<br/>docs/ + dashboard/public/"]
-    D["dashboard/<br/>www.aitmpl.com"]
-    CLI["npm CLI<br/>npx claude-code-templates"]
-    P["User project<br/>.claude/, .mcp.json"]
-    S[("Supabase<br/>download counts")]
-    C --> G --> J --> D
-    D -->|copy install cmd| CLI
-    C -->|raw GitHub fetch| CLI
-    CLI -->|writes files| P
-    CLI -->|track download| D
-    D --> S
-    S -->|counts| G
+    F["Component files<br/>cli-tool/components/"]
+    S["Python script<br/>builds the catalog"]
+    W["Website + API<br/>dashboard/"]
+    C["CLI installer<br/>cli-tool/src/"]
+    U["User's project"]
+    DB[("Supabase<br/>download counts")]
+    F --> S --> W
+    F -->|downloaded from GitHub| C
+    C -->|writes files| U
+    C -->|reports install| W
+    W --> DB
 ```
 
-Read it left to right: a component file on `main` is scanned into JSON, the site renders that JSON, the user copies a command, and the CLI pulls the same file from GitHub into their project. Each install pings `/api/track-download-supabase`, and those counts flow back into the catalog on the next daily regeneration.
+How to read it:
 
-## Top-level directory map
+1. Someone adds a component file to the repo.
+2. A Python script reads all the component files and builds the catalog (JSON).
+3. The website shows the catalog. A user copies an install command.
+4. The CLI downloads the component **straight from GitHub** and saves it into the user's project.
+5. The CLI tells our API "this was installed", and the API saves that in Supabase.
 
-`cli-tool/` holds 7,200 of the repo's ~9,600 tracked files, and 5,700 of those are skills. The rest of the tree is small and single-purpose.
+**The most important thing to understand:** the CLI does not contain the components. It downloads them from GitHub every time. So a new component works as soon as it's merged to `main`, with no new CLI release.
 
-| Path | What it owns | Notes |
+## 4. Where things live
+
+You only need to know six folders to start:
+
+| Folder | What's inside | Language |
 | --- | --- | --- |
-| `cli-tool/components/` | The component library (agents, commands, skills, hooks, MCPs, settings, loops, mods, sandbox) | Source of truth for everything the site shows and the CLI installs |
-| `cli-tool/bin/`, `cli-tool/src/` | The Node CLI | Only these ship in the npm package (see root `package.json` `files`) |
-| `cli-tool/templates/` | Language starter configs: `common`, `javascript-typescript`, `python`, `ruby`, `go`, `rust` | Used by the interactive / `--template` setup flow |
-| `cli-tool/analytics-ui/` | Astro source for the local analytics dashboard | Builds into `cli-tool/src/analytics-web/` |
-| `cli-tool/tests/` | Jest tests: `unit/`, `integration/`, `validation/`, `skills/` | Config in `cli-tool/jest.config.js` |
-| `cli-tool/docs_to_claude/` | Internal design notes (hooks, statuslines, analytics state detection, download tracking) | Background reading, not shipped |
-| `dashboard/` | Astro 5 + React site and all API routes for www / app.aitmpl.com | Deployed to Cloudflare Pages |
-| `scripts/` | Python + Node build scripts: catalog, trending, plugins, star history, version sync, SkillSpector | Catalog generator is the important one |
-| `docs/` | Legacy static site + the full `components.json` + blog source | Only on GitHub Pages now; blog must be mirrored to `dashboard/public/blog/` |
-| `cloudflare-workers/` | `crons`, `pulse`, `newsletter`, `daily-health-report`, `docs-monitor` | Independent Workers, each with its own `wrangler.toml` |
-| `cli-rust/` | A Rust port of the CLI (Cargo project + `npm/` wrapper) | Built by `build-rust-cli.yml` / `rust-ci.yml` |
-| `database/migrations/` | SQL migrations | For the Neon / Supabase tables the APIs use |
-| `.github/` | 18 workflows, CODEOWNERS, dependabot, `WORKFLOWS_REFERENCE.md` | Covered in the CI/CD section |
-| `.claude/` | This repo's own Claude Code setup: 15 agents, 3 commands, rules, a hook | Tools for maintaining the repo, not catalog items |
-| `.claude-plugin/` | One packaged skill (`skills/owasp-security/`) with `skill.json` | Not a marketplace manifest |
-| Root files | `package.json` (npm package), `CLAUDE.md`, `CONTRIBUTING.md`, `.env.example`, `.mcp.json` (Linear + Neon MCPs) | `package.json` version is synced to `cli-tool/package.json` by `scripts/sync-package-versions.js` |
+| `cli-tool/components/` | All the add-ons (thousands of `.md` and `.json` files) | Markdown, JSON |
+| `cli-tool/src/` | The CLI installer's code | Node.js (CommonJS) |
+| `dashboard/src/pages/api/` | The backend API endpoints | TypeScript |
+| `scripts/` | Build scripts, mainly the catalog builder | Python |
+| `cloudflare-workers/` | Scheduled jobs (health checks, weekly reports) | JavaScript |
+| `.github/workflows/` | CI: tests, deploys, automatic catalog updates | YAML |
 
-## Component library (`cli-tool/components/`)
+You can ignore these at first: `docs/` (old website), `cli-rust/` (experimental Rust version of the CLI), `cli-tool/analytics-ui/` and the other local dashboards.
 
-Every component lives at `cli-tool/components/{type}/{category}/{name}`, and that path minus the extension is its install id (`--agent development-team/backend-architect`). The category folder is only for organisation: agents and commands install flat into `.claude/agents/` and `.claude/commands/`.
+## 5. The components
 
-| Type | Count (Sep 2026) | Source format | CLI flag | Installed to |
-| --- | --- | --- | --- | --- |
-| Skills | 912 `SKILL.md` | Directory: `SKILL.md` (YAML frontmatter) + `references/`, scripts, assets | `--skill` | `.claude/skills/{name}/` (whole directory, via GitHub contents API) |
-| Agents | 424 | `.md` with frontmatter `name`, `description`, `tools` | `--agent` | `.claude/agents/{name}.md` |
-| Commands | 348 | `.md` with frontmatter `allowed-tools`, `argument-hint`, `description`; body uses `$ARGUMENTS` | `--command` | `.claude/commands/{name}.md` |
-| MCPs | 104 | `.json` with `mcpServers` | `--mcp` | Merged into `.mcp.json` (each server's `description` stripped) |
-| Settings | 72 | `.json` fragment of `settings.json` (`permissions`, `env`, `statusLine`, `model`...) | `--setting` | User, project, local or enterprise `settings*.json` (user picks); statuslines also pull `.py` into `.claude/scripts/` |
-| Hooks | 62 (+24 `.py`/`.sh` scripts) | `.json` with a `hooks` block keyed by event (`PreToolUse`, `PostToolUse`...) | `--hook` | Merged into chosen `settings*.json`; sibling `.py`/`.sh` go to `.claude/hooks/` |
-| Mods | 29 plugin dirs in 10 categories | Plugin directory: `.claude-plugin/plugin.json`, `hooks/hooks.json`, TS/JS hook modules, `README.md` | `--mod` | `.claude/skills/{name}/`, loaded as `{name}@skills-dir` in a trusted project |
-| Loops | 18 | `.md`; frontmatter has `interval`, `stop-condition`, `components: [agent:..., hook:...]` | `--loop` | `.claude/loops/`, then every referenced component is installed too |
-| Sandbox | 3 providers (`e2b`, `docker`, `cloudflare`) | Launcher scripts + requirements | `--sandbox` | Not installed; shipped inside the npm package and run from there |
+Each component is a file at `cli-tool/components/<type>/<category>/<name>`. The folder path is also its install name.
 
-Things worth knowing:
+| Type | File | Gets installed to | Count |
+| --- | --- | --- | --- |
+| Agent | `.md` | `.claude/agents/` | 424 |
+| Command | `.md` | `.claude/commands/` | 348 |
+| Skill | a folder with `SKILL.md` | `.claude/skills/<name>/` | 912 |
+| MCP | `.json` | merged into `.mcp.json` | 104 |
+| Setting | `.json` | merged into a `settings.json` | 72 |
+| Hook | `.json` (+ optional `.py`/`.sh`) | merged into a `settings.json` | 62 |
+| Loop | `.md` | `.claude/loops/`, plus everything it lists | 18 |
+| Mod | a plugin folder | `.claude/skills/<name>/` | 29 |
 
-- **Metadata comes from frontmatter or the `description` key.** The catalog generator reads those, so a bad frontmatter block means a bad card on the site.
-- **Hooks and settings share a merge path.** Both are JSON fragments that get deep-merged into a settings file; the CLI also rewrites `python3` to the right interpreter on Windows (`replacePythonCommands`).
-- **Mods are the one type with its own toolchain.** `mods/tsconfig.json` + `mods/types/claude-code.d.ts` typecheck every module (CI: `mods-typecheck.yml`). They need Claude Code 2.1.259+ and `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1`.
-- **Skills are scanned for security.** SkillSpector runs on changed skills in PRs and blocks HIGH/CRITICAL scores.
-- **Loops are composites.** `parseLoopReferencedComponents()` in `src/index.js` reads the `components:` line and installs each reference.
-- Supporting files: `hooks/HOOK_PATTERNS_COMPRESSED.json`, `skills/ANTHROPIC_ATTRIBUTION.md`, `mods/README.md`, `sandbox/README.md`.
+Two rules of thumb:
 
-## The npm CLI (`cli-tool/bin` + `cli-tool/src`)
+- **Markdown components** (agents, commands) are copied as-is.
+- **JSON components** (MCPs, settings, hooks) are *merged* into a file the user already has, so we don't overwrite their config.
 
-The CLI is a CommonJS Node app built on `commander`. `bin/create-claude-config.js` declares ~50 flags, prints the banner (`tui.js`), and hands the parsed options to one function: `createClaudeConfig()` in `src/index.js`. That function is a long `if` ladder; the first matching flag wins and returns.
+## 6. The CLI: how an install works
+
+Code: `cli-tool/bin/create-claude-config.js` (the entry point) and `cli-tool/src/index.js` (almost everything else).
 
 ```mermaid
-flowchart TD
-    B["bin/create-claude-config.js<br/>commander flags"] --> I["createClaudeConfig()<br/>src/index.js"]
-    I --> S["--studio / --sandbox<br/>E2B, Docker, Cloudflare"]
-    I --> M["--agent --skill --hook ...<br/>installMultipleComponents()"]
-    I --> W["--workflow #hash"]
-    I --> A["--create/list/remove-agent<br/>global agents (sdk/)"]
-    I --> D["--analytics --chats --plugins<br/>--skills-manager --teams --2025"]
-    I --> H["--health-check, --*-stats"]
-    I --> T["no flags: showMainMenu()<br/>or --template setup"]
+sequenceDiagram
+    participant User
+    participant CLI as CLI (index.js)
+    participant GH as GitHub
+    participant API as aitmpl.com API
+    User->>CLI: npx claude-code-templates --agent x/y
+    CLI->>GH: GET raw file for x/y
+    GH-->>CLI: file contents
+    CLI->>CLI: write to .claude/agents/y.md
+    CLI->>API: POST /api/track-download-supabase
 ```
 
-### The install path (what 90% of usage hits)
+Step by step in the code:
 
-1. `installMultipleComponents()` splits each flag on commas into eight lists and generates a `batchId`.
-2. It calls one `installIndividual{Agent,Command,MCP,Setting,Hook,Skill,Mod,Loop}()` per item. All live in `src/index.js` (lines ~480–1920).
-3. Each installer fetches from GitHub `main`: single files via `raw.githubusercontent.com`, directories (skills, mods) via the GitHub contents API, recursively.
-4. It writes or merges into the target project (table in the section above). Settings and hooks prompt for location: user `~/.claude/settings.json`, project `.claude/settings.json`, local `.claude/settings.local.json`, or enterprise `managed-settings.json`.
-5. `tracking-service.js` posts to `https://www.aitmpl.com/api/track-download-supabase` and `/api/track-installation-outcome`. It is anonymous, on by default, and disabled by `CCT_NO_TRACKING`, `CCT_NO_ANALYTICS` or `CI`.
-6. If `--prompt` was passed, `handlePromptExecution()` then runs Claude Code with it.
+1. `bin/create-claude-config.js` reads the flags with the `commander` library.
+2. It calls `createClaudeConfig(options)` in `src/index.js`. This function checks the flags one by one and runs the matching feature.
+3. For install flags it calls `installMultipleComponents()`, which calls one function per component, e.g. `installIndividualAgent()`.
+4. That function downloads the file with `fetch()` and writes it with `fs-extra`.
+5. `src/tracking-service.js` sends an anonymous "installed" event to our API. Users can turn this off with `CCT_NO_TRACKING=true`.
 
-### `src/` module map
+**Good first read:** `installIndividualAgent()` in `cli-tool/src/index.js`. It's about 70 lines and shows the whole pattern.
 
-| Module | Role |
+Run the tests with `cd cli-tool && npx jest`.
+
+## 7. The backend API
+
+The API lives inside the website project, in `dashboard/src/pages/api/`. Each file is one endpoint. The framework is Astro, but the endpoints are like small Express handlers: you export a `GET` or `POST` function that gets a request and returns a response.
+
+The endpoints that matter most:
+
+| Endpoint | Who calls it | What it does | Database |
+| --- | --- | --- | --- |
+| `POST /api/track-download-supabase` | The CLI, on every install | Saves one download row | Supabase |
+| `POST /api/track-installation-outcome` | The CLI | Saves whether the install worked | Supabase |
+| `GET /api/claude-code-check` | A scheduled Worker, every 30 min | Checks for new Claude Code releases, posts to Discord | Neon |
+| `GET /api/health-check` | A scheduled Worker, hourly | Checks the site is healthy | none |
+| `/api/collections/*` | The website (logged-in users) | Save and share lists of components | Neon |
+| `POST /api/discord/interactions` | Discord | Answers the Discord bot's slash commands | none |
+
+Helpers you'll reuse:
+
+- `dashboard/src/lib/api/cors.ts`: `jsonResponse()` and `corsResponse()` for building responses.
+- `dashboard/src/lib/api/neon.ts`: gets a Neon database client.
+- `dashboard/src/lib/api/auth.ts`: checks the logged-in user (Clerk).
+- `dashboard/src/middleware.ts`: makes secrets available as `process.env.X`.
+
+**Secrets are never written in code.** Locally they go in `.env` (see `.env.example`). In production they're set with `wrangler pages secret put NAME`.
+
+Run it locally:
+
+```bash
+cd dashboard
+npm install
+npx astro dev --port 4321
+# API is now at http://localhost:4321/api/...
+```
+
+## 8. Databases
+
+| Database | Used for | Where the schema is |
+| --- | --- | --- |
+| Supabase (Postgres) | Download and usage events. The main table is `component_downloads` | Managed in Supabase |
+| Neon (Postgres) | Claude Code release history, user collections, command usage logs | `database/migrations/`, `dashboard/src/lib/live-task/migration.sql` |
+
+## 9. The catalog builder
+
+`scripts/generate_components_json.py` reads every component file and writes the JSON files the website loads (into `docs/` and `dashboard/public/`).
+
+```bash
+python scripts/generate_components_json.py --skip-downloads   # fast: seconds
+python scripts/generate_components_json.py                    # slow: also pulls download counts from Supabase
+```
+
+Important: **these JSON files are generated. Never edit them by hand.** CI rebuilds them automatically after every merge and once a day. If you're contributing from a fork, don't commit them at all, or a CI check will fail your PR.
+
+## 10. Scheduled jobs (Cloudflare Workers)
+
+Each folder in `cloudflare-workers/` is a tiny standalone program that Cloudflare runs on a timer. Think of each one as a cron job.
+
+| Worker | Runs | Does |
+| --- | --- | --- |
+| `crons` | Every 30 min and hourly | Calls `/api/claude-code-check` and `/api/health-check` |
+| `pulse` | Sundays | Sends a weekly stats report to Telegram |
+| `daily-health-report` | Daily | Sends a site health + error summary to Telegram |
+| `newsletter` | Paused | Weekly email (currently switched off) |
+
+They're deployed by hand: `cd cloudflare-workers/<name> && npx wrangler deploy`.
+
+## 11. How code gets to production
+
+| What changed | What happens |
 | --- | --- |
-| `index.js` (3,700 lines) | Dispatcher, every installer, workflows, sandboxes, template setup |
-| `tui.js`, `prompts.js` | Banner, main menu and inquirer prompts for the interactive flow |
-| `templates.js`, `file-operations.js`, `utils.js` | `TEMPLATES_CONFIG` (language templates), template copying, project/framework detection |
-| `command-scanner.js`, `hook-scanner.js`, `agents.js` | Discover available commands/hooks/agents for a template |
-| `command-stats.js`, `hook-stats.js`, `mcp-stats.js` | `--*-stats`: analyse what a project already has, estimate token cost |
-| `health-check.js` | `--health-check`: validates Node, Claude Code install, config, project setup |
-| `analytics.js` + `analytics/` | `--analytics` / `--agents` / `--2025`: Express + WebSocket server on `localhost:3333` reading `~/.claude` session logs. `analytics/core/` has the analyzers (conversation, session, agent, process detection, state), `data/DataCache.js`, `notifications/` |
-| `analytics-web/` | Built frontend for that server (source is `cli-tool/analytics-ui/`, Astro) |
-| `chats-mobile.js`, `console-bridge.js`, `claude-api-proxy.js` | `--chats`: mobile chat UI bridged to a live Claude Code console over WebSocket; `--tunnel` exposes it via Cloudflare Tunnel |
-| `plugin-dashboard.js`, `skill-dashboard.js`, `teams-dashboard.js` (+ `*-web/`) | `--plugins`, `--skills-manager`, `--teams` local dashboards |
-| `sandbox-server.js`, `sandbox-interface.html` | `--studio` UI for local/cloud execution |
-| `session-sharing.js` | `--clone-session <url>`: import a shared session |
-| `sdk/global-agent-manager.js` | `--create-agent` etc.: global agents runnable from anywhere |
-| `validation/` | `ValidationOrchestrator` + five validators (structural, semantic, reference, integrity, provenance); used by `security-audit.js` |
-| `tracking-service.js`, `error-reporting.js` | Anonymous usage analytics (opt-out) and Sentry crash reports (opt-in via `CCT_ERROR_REPORTING=true`) |
+| Anything in `dashboard/` merged to `main` | GitHub Actions builds and deploys the site automatically |
+| A component merged to `main` | Users can install it right away; CI rebuilds the catalog |
+| CLI code in `cli-tool/src/` | Nothing automatic. A maintainer publishes a new npm version by hand |
+| A Worker | Nothing automatic. Deploy it by hand with `wrangler` |
 
-Tests: `cd cli-tool && npx jest` (unit, integration, validation, skills). The root `npm test` only checks that the root and `cli-tool` package versions match.
+## 12. Your first week
 
-## Catalog pipeline (`scripts/generate_components_json.py`)
+Suggested reading order, about an hour in total:
 
-One 1,100-line Python script turns the component folders into every JSON file the site reads. Its output is generated, never hand-edited, and external contributors must not commit it (`generated-files-guard.yml` fails their PR).
+1. `cli-tool/bin/create-claude-config.js`: see all the CLI flags.
+2. `installIndividualAgent()` in `cli-tool/src/index.js`: see one install from start to finish.
+3. One agent file, e.g. `cli-tool/components/agents/development-team/backend-architect.md`.
+4. `dashboard/src/pages/api/track-download-supabase.ts`: the endpoint the CLI calls.
+5. `dashboard/src/lib/api/cors.ts` and `neon.ts`: the shared API helpers.
+6. `cloudflare-workers/crons/index.js`: a scheduled job that calls the API.
 
-What `generate_components_json(skip_downloads)` does, in order:
+After that you've followed one component all the way from the file to the database.
 
-1. `run_security_validation()`: runs `npm run security-audit:json` in `cli-tool` and attaches the report per component.
-2. `fetch_download_stats()`: pulls the whole `component_downloads` table from Supabase (minutes). With `--skip-downloads` it reuses counts already in `docs/components.json` instead (seconds).
-3. Walks the 9 types (`agents, commands, mcps, settings, hooks, sandbox, skills, loops, mods`), parses frontmatter / JSON descriptions, and collects skill reference files and every text file of a mod.
-4. Merges in `plugins.json` and templates, sorts by path, and writes the outputs below.
+## 13. Known rough edges
 
-| Output | Contents | Read by |
-| --- | --- | --- |
-| `docs/components.json` | Full catalog incl. `content` and `security` | Legacy static site; the source the `--skip-downloads` counts come from |
-| `dashboard/public/components.json` | Catalog without `content`/`security` | Dashboard pages |
-| `dashboard/public/components/{type}.json` | One file per type | `ComponentGrid.tsx`, per active tab |
-| `dashboard/public/counts.json` | `{"agents": 424, ...}` | Sidebar, plugins page |
-| `dashboard/public/search-index.json` | Flat `{type,name,path,description,category}` list | `SearchModal.tsx` |
-| `dashboard/public/component-content/{type}/{slug}.json` | Full markdown body (+ `files` for mods) | Detail page, send-to-repo flow |
+These looked wrong while this guide was being written. They haven't been tested.
 
-Sibling scripts: `generate_trending_data.py` writes `docs/trending-data.json` (copied into `dashboard/public/` by CI); `generate_plugins_json.py` scans plugin marketplaces with the `gh` CLI (manual, offline); `generate_star_history.py`, `generate_claude_jobs.py`, `generate_claude_prs.py` feed smaller pages; `skillspector_scan.py` drives the skill security scan; `sync-package-versions.js` keeps the two `package.json` versions aligned. Python tests: `scripts/test_generate_*.py`.
+- `run_security_validation()` in `scripts/generate_components_json.py` looks for `scripts/cli-tool/`, which doesn't exist. So the `security` field in the catalog is probably always empty.
+- The workflows that rebuild the catalog push with `GITHUB_TOKEN`. GitHub doesn't start other workflows from those pushes, so the site may only pick up new catalog data on the next deploy that does run.
 
-One quirk spotted while reading: `run_security_validation()` builds its path as `Path(__file__).parent / 'cli-tool'`, which resolves to `scripts/cli-tool/`. That folder does not exist, so the `FileNotFoundError` is caught and the `security` field probably always comes out empty. Worth confirming before relying on it.
-
-## Dashboard (`dashboard/`, www.aitmpl.com)
-
-The site is Astro 5 in `output: 'server'` mode on Cloudflare Pages (project `aitmpl-dashboard`), with React islands, Tailwind v4 and Clerk auth. Pages and API routes live in one project; there is no separate backend.
-
-### Pages (`src/pages/`)
-
-| Route file | URL | What it shows |
-| --- | --- | --- |
-| `index.astro` | `/` | Home: stats, featured partners, component grid |
-| `[...type].astro` | `/agents`, `/skills`, `/mods` ... | One tab per component type (`ComponentGrid.tsx`) |
-| `component/[type]/[...slug].astro` | `/component/agent/...` | Component detail: markdown, file tree, install command, send-to-repo |
-| `trending.astro`, `jobs.astro` | `/trending`, `/jobs` | Download trends; Claude jobs board |
-| `plugins/index.astro`, `plugins/[slug].astro` | `/plugins/...` | Plugin marketplaces from `plugins.json` |
-| `featured/[slug].astro` | `/featured/brightdata` ... | Partner pages; config in `lib/constants.ts` `FEATURED_ITEMS` |
-| `my-components.astro`, `c/[slug].astro` | `/my-components`, `/c/...` | Signed-in user collections and their shared links (Neon) |
-| `live-task.astro` | `/live-task` | Monitor for the automated component-review loop |
-| `github-callback.astro`, `sitemap.xml.ts` | | GitHub OAuth callback; dynamic sitemap |
-
-### API routes (`src/pages/api/`)
-
-| Route | Purpose | Backing store |
-| --- | --- | --- |
-| `track-download-supabase` | Called by the CLI on every install (critical) | Supabase `component_downloads` |
-| `track-installation-outcome`, `track-command-usage`, `track-website-events` | CLI outcome, CLI command and site telemetry | Supabase |
-| `claude-code-check` | Detects new Claude Code releases, posts changelog to Discord; hit every 30 min by the `crons` Worker | Neon |
-| `health-check` | Hourly health probe (also via `crons`) | — |
-| `discord/interactions` | Discord bot slash commands (`/search`, `/info`, `/install`, `/popular`) | Catalog JSON |
-| `collections/*` | CRUD + share for user collections (Clerk JWT) | Neon |
-| `github/token` | Exchanges GitHub OAuth code, used by send-to-repo | — |
-| `live-task/*` | Cycles, tools, control for the review loop monitor | Neon (`lib/live-task/migration.sql`) |
-| `ads/active` | Active sponsor slot | — |
-
-### Supporting code
-
-- `src/middleware.ts` copies Cloudflare runtime secrets into `process.env`, so every route can read `process.env.X`.
-- `src/lib/api/`: `cors.ts` (`jsonResponse`, `corsResponse`), `neon.ts` (client factory), `auth.ts` (Clerk JWT), `error-tracking.ts` (tiny Sentry client), `changelog-parser.ts`.
-- `src/lib/`: `data.ts` and `types.ts` (catalog loading and types), `constants.ts` (featured items, nav), `collections-api.ts`, `github-api.ts`, `home-stats.ts`, `webmcp.ts`.
-- Key islands in `src/components/`: `ComponentGrid`, `SearchModal`, `SendToRepoModal` (opens a PR with the component in the user's repo), `SkillExplorer` + `FileTreeSidebar`, `CartSidebar` (multi-select install command), `TrendingView`, `MyComponentsView`.
-- `public/`: the generated catalog JSON, `blog/` (the live blog), `_headers` (24 h cache on JSON) and `_redirects` (old URLs such as `/function-hooks`).
-- Config: `astro.config.mjs` (Cloudflare adapter, `react-dom/server` alias — do not remove), `wrangler.toml` (build output, `nodejs_compat`, `PUBLIC_*` vars).
-
-Run it: `cd dashboard && npm install && npx astro dev --port 4321`.
-
-## Cloudflare Workers, database and the Rust CLI
-
-Five Workers run scheduled jobs outside the Pages project; each is a single dependency-free `index.js` + `wrangler.toml`, deployed by hand with `npx wrangler deploy` (no CI deploys them). The free plan caps the account at 5 cron triggers, which is why workers get paused or retired.
-
-| Worker (`cloudflare-workers/`) | Deployed name | Schedule (UTC) | Job | Status |
-| --- | --- | --- | --- | --- |
-| `crons` | `aitmpl-crons` | `*/30 * * * *`, `0 * * * *` | Calls dashboard `/api/claude-code-check` and `/api/health-check` with `TRIGGER_SECRET` | Live |
-| `pulse` | `pulse-weekly-report` | Sundays 14:00 | Weekly KPI report (GitHub, Discord, Supabase, npm, GA) to Telegram | Live |
-| `daily-health-report` | `daily-health-report` | Daily 14:00 | Site health + 24 h Sentry error digest to Telegram | Live |
-| `newsletter` | `aitmpl-newsletter` | none (`crons = []`) | Weekly trending-components email via Resend Broadcasts | Paused since 2026-09-20 (`NEWSLETTER_ENABLED="false"`) |
-| `docs-monitor` | `claude-docs-monitor` | hourly (in toml) | Watched code.claude.com/docs for changes | Deleted from Cloudflare 2026-07; code kept |
-
-Each worker that reports errors has its own copy of `sentry.js`, a tiny fetch-based Sentry client (no SDK anywhere in the repo).
-
-**Databases.** Two stores back the APIs. Supabase holds download and telemetry events (`component_downloads`). Neon Postgres holds Claude Code release tracking, command usage logs, collections and live-task data; `database/migrations/` has `001_create_claude_code_versions.sql` and `002_create_command_usage_logs.sql`.
-
-**Rust CLI (`cli-rust/`).** A preview (v0.1.0) Rust port of the install core only: agents, commands, MCPs, settings, hooks, skills, checked for byte-for-byte parity with the Node CLI. Everything else is delegated to the Node CLI. Layout: `src/main.rs`, `cli.rs` (args), `commands/` (one per type), `github.rs` (fetching), `merge.rs` (JSON merging), `python_compat.rs`, `tracking.rs`; `npm/` packages the binary. It ships from GitHub Releases tagged `cli-rust-v*`, separate from the npm package.
-
-## CI/CD (`.github/workflows/`)
-
-18 workflows fall into five groups: deploy, catalog regeneration, PR guards, security scans and community bots. `.github/WORKFLOWS_REFERENCE.md` has the long-form reference.
-
-| Workflow | Trigger | What it does |
-| --- | --- | --- |
-| `deploy.yml` | Push to `main` touching `dashboard/**` | Builds the Astro site, `wrangler pages deploy` to `aitmpl-dashboard` |
-| `update-component-content.yml` | Push to `main` touching `cli-tool/components/**`, `cli-tool/templates/**` or the generator | Runs the generator with `--skip-downloads`, commits the JSON |
-| `update-json-data.yml` | Daily 03:00 UTC | Full regeneration with Supabase download counts + trending data, commits the JSON |
-| `generated-files-guard.yml` | PR touching generated JSON | Fails non-maintainer PRs and posts revert instructions |
-| `component-pr-welcome.yml` | PR touching `cli-tool/components/**` | Welcome comment and contribution rules for contributors |
-| `component-security-validation.yml` | PR / push on component `.md` files | Runs `cli-tool/src/validation` checks |
-| `skill-security-scan.yml` | PR touching skills | SkillSpector on changed skills; blocks HIGH/CRITICAL |
-| `skill-security-scan-all.yml` | Mondays 06:00 UTC | SkillSpector on all skills; report only |
-| `mods-typecheck.yml` | PR / push on `cli-tool/components/mods/**` | `tsc` against `claude-code.d.ts` |
-| `version-sync.yml` | Every PR and push to `main` | Root and `cli-tool` package versions must match |
-| `rust-ci.yml`, `build-rust-cli.yml` | PR on `cli-rust/**`; tag `cli-rust-v*` | Test the Rust CLI; build release binaries |
-| `daily-component-discord.yml`, `daily-blog-discord.yml`, `daily-general-discord.yml`, `daily-community-help-discord.yml` | Daily 14:00–17:00 UTC | Post a component, a blog article, general and help content to Discord |
-| `discord-release-notification.yml` | GitHub release published | Announces the release on Discord |
-| `star-history.yml` | Mondays 04:00 UTC | Regenerates the star-history SVG |
-
-The npm package is **not** published by CI. Releases are manual: `npm version X.Y.Z --ignore-scripts=false`, push with tags, then `npm publish --ignore-scripts=false` with a granular token (see `CLAUDE.md`).
-
-One thing to check: both catalog workflows push with `secrets.GITHUB_TOKEN`, and GitHub does not start new workflow runs from pushes made with that token. If that holds here, their commits to `dashboard/public/` do not trigger `deploy.yml` by themselves; the site picks them up on the next deploy that does run.
-
-## Repo tooling for Claude itself (`.claude/`)
-
-`.claude/` configures Claude Code for people maintaining this repo. None of it is in the catalog or the npm package.
-
-- **Agents (15):** the workflow ones are `component-reviewer` (required for every component change), `component-researcher` → `component-improver` (research, then edit + PR), `component-migrator` (import from other repos), `catalog-generator`, `build-checker`, `deployer`, `blog-writer`, `linear-tracker`. The rest (`agent-expert`, `command-expert`, `mcp-expert`, `cli-ui-designer`, `frontend-developer`, `docusaurus-expert`) help author new components.
-- **Commands (3):** `/create-blog-article`, `/lint`, `/cleanup-cache`.
-- **Rules (3):** path-scoped instructions loaded only when you touch `cli-tool/**`, `dashboard/**` or `cloudflare-workers/**`. Short, focused versions of `CLAUDE.md`.
-- **Hook:** `hooks/telegram-pr-webhook.py` notifies Telegram about PRs.
-- **`launch.json`:** runs the dashboard dev server (`npx astro dev --port 4321`).
-- **Root `.mcp.json`:** Linear and Neon MCP servers, used by `linear-tracker` and for database work.
-
-The `/live-task` page and `scripts/run-review-cycle.sh` are the other half of this: an automated loop that picks a component from Linear, researches and improves it with these agents, and reports progress to Neon for the dashboard to show.
-
-## Common tasks: where to look
-
-| I want to... | Touch these | Then |
-| --- | --- | --- |
-| Add or edit a component | `cli-tool/components/{type}/{category}/{name}` | Review with `component-reviewer`; test the install with `npx claude-code-templates@latest --{type} {category}/{name}` once merged (it installs from `main`) |
-| Add a mod | New plugin dir under `cli-tool/components/mods/` | `npx -y -p typescript@5 tsc -p tsconfig.json` in `mods/`; `claude plugin validate <dir>` |
-| Change how a type installs | `installIndividual*()` in `cli-tool/src/index.js` | Mirror in `cli-rust/src/commands/` if it is one of the six ported types |
-| Add a CLI flag | `cli-tool/bin/create-claude-config.js` + the `if` ladder in `createClaudeConfig()` | Bump the version for users to get it (manual npm publish) |
-| Change what the site shows for components | `scripts/generate_components_json.py` (data) or `dashboard/src/components/ComponentGrid.tsx` / detail page (UI) | Regenerate with `--skip-downloads` if you are a maintainer |
-| Add an API endpoint | `dashboard/src/pages/api/<name>.ts`, export `GET`/`POST` | Use `lib/api/cors.ts` helpers; secrets via `wrangler pages secret put` |
-| Add a featured partner | `dashboard/src/lib/constants.ts` `FEATURED_ITEMS` + a block in `featured/[slug].astro` | Deploys on push |
-| Add a scheduled job | New folder in `cloudflare-workers/` | Mind the 5-cron-trigger limit; `npx wrangler deploy` |
-| Publish a blog post | `/create-blog-article` → `docs/blog/` | Mirror into `dashboard/public/blog/` and keep both `blog-articles.json` identical |
-
-A good reading order for a first pass: `cli-tool/bin/create-claude-config.js` → `createClaudeConfig()` and `installIndividualAgent()` in `cli-tool/src/index.js` → one component of each type → `scripts/generate_components_json.py` → `dashboard/src/pages/[...type].astro` and `ComponentGrid.tsx` → `dashboard/src/pages/api/track-download-supabase.ts`. That traces one component end to end.
+For more detail on any part, see `CLAUDE.md` at the repo root.
